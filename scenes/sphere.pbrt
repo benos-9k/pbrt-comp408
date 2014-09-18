@@ -7,12 +7,13 @@ WorldBegin
 
 AttributeBegin
 CoordSysTransform "camera"
-LightSource "distant" "point from" [0 0 0] "point to" [0 1 1] "rgb L" [3 3 3]
+LightSource "distant" "point from" [0 0 0] "point to" [0 0 1] "rgb L" [3 3 3]
 AttributeEnd
 
 AttributeBegin
-Material "matte" "rgb Kd" [0.7 0.2 0.2]
-Shape "sphere" "float radius" [20] "float zmin" [-10] "float zmax" [10] "float phimax" [220]
+Texture "tex" "spectrum" "ben"
+Material "matte" "texture Kd" "tex"
+Shape "sphere" "float radius" [20]
 AttributeEnd
 
 WorldEnd
