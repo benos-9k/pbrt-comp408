@@ -29,6 +29,7 @@
 
  */
 
+#include <random>
 
 // shapes/sphere.cpp*
 #include "stdafx.h"
@@ -50,8 +51,50 @@ Sphere::Sphere(const Transform *o2w, const Transform *w2o, bool ro,
 
 
 BBox Sphere::ObjectBound() const {
-    return BBox(Point(-radius, -radius, zmin),
-                Point( radius,  radius, zmax));
+	using namespace std;
+
+	BBox bound0 = BBox(Point(-radius, -radius, zmin), Point( radius,  radius, zmax));
+
+	float x0 = -radius, x1 = radius;
+	float y0 = -radius, y1 = radius;
+
+	if (phiMax < M_PI / 2) {
+		y0 = 0;
+		x0 = 0;
+		y1 = radius * sin(phiMax);
+	} else if (phiMax >= M_PI / 2 && phiMax < M_PI) {
+		y0 = 0;
+		x0 *= radius * cos(phiMax);
+	} else if (phiMax >= M_PI && phiMax < 3 * M_PI / 2) {
+		y0 = radius * sin(phiMax);
+	} else if (phiMax >= 3 * M_PI / 2) {
+		// nothing
+	}
+
+    BBox bound1 = BBox(Point(x0, y0, zmin), Point(x1, y1, zmax));
+
+	// test...
+#ifndef NDEBUG
+	Warning("TESTING BOUNDING BOX");
+	default_random_engine gen;
+	uniform_real_distribution<float> dist(-1, 1);
+
+	for (unsigned i = 0; i < 1000; i++) {
+		Vector v(dist(gen), dist(gen), dist(gen));
+		v = Normalize(v);
+		Point p = Point() + v * radius * 2;
+		Ray r(p, -v, 0);
+		Ray rw;
+		(*ObjectToWorld)(r, &rw);
+		if (IntersectP(rw)) {
+			if (!bound1.IntersectP(r)) {
+				Error("BOUNDING BOX FAILURE");
+			}
+		}
+	}
+#endif
+
+	return bound1;
 }
 
 

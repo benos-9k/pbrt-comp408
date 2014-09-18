@@ -44,19 +44,19 @@ AttributeEnd
 AttributeBegin
 Translate 0 0 -1.0
 Shape "sphere" "float radius" [0.5]
-      "float phimax" [30] "float zmax" [0.35] "float zmin" [-.2]
+      "float phimax" [100] "float zmax" [0.35] "float zmin" [-.2]
 AttributeEnd
 
 AttributeBegin
 Translate 0 0 -2.0
 Shape "sphere" "float radius" [0.5]
-      "float phimax" [30] "float zmax" [0.35] "float zmin" [-.2]
+      "float phimax" [200] "float zmax" [0.35] "float zmin" [-.2]
 AttributeEnd
 
 AttributeBegin
 Translate 0 0 -3.0
 Shape "sphere" "float radius" [0.5]
-      "float phimax" [30] "float zmax" [0.35] "float zmin" [-.2]
+      "float phimax" [300] "float zmax" [0.35] "float zmin" [-.2]
 AttributeEnd
 
 AttributeBegin
