@@ -1,0 +1,18 @@
+LookAt 0 80 80 0 -1 0 0 1 0
+Camera "perspective" "float fov" [30]
+Sampler "bestcandidate"
+Film "image" "string filename" ["sphere.exr"] "integer xresolution" [256] "integer yresolution" [256]
+
+WorldBegin
+
+AttributeBegin
+CoordSysTransform "camera"
+LightSource "distant" "point from" [0 0 0] "point to" [0 1 1] "rgb L" [3 3 3]
+AttributeEnd
+
+AttributeBegin
+Material "matte" "rgb Kd" [0.7 0.2 0.2]
+Shape "sphere" "float radius" [20] "float zmin" [-10] "float zmax" [10] "float phimax" [220]
+AttributeEnd
+
+WorldEnd
