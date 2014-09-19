@@ -12,8 +12,12 @@ Spectrum BenTexture::Evaluate(const DifferentialGeometry &dg) const {
 		return pow(pow(cos(M_PI * x), 2), 0.1 + pow(fmod(fmod(x, 1) + 1, 1), 3) * 30);
 	};
 
-	float x0 = 40 * (p.y + 0.02 * FBm(p, dpdx, dpdy, 1.0, 4));
-	float x1 = 200 * (p.y + 0.02 * FBm(p, dpdx, dpdy, 1.0, 4));
+	Point p2 = p;
+	p2.x *= 0.1;
+	p2.z *= 0.1;
+
+	float x0 = 40 * (p.y + 0.06 * FBm(p2, dpdx, dpdy, 1.0, 4));
+	float x1 = 200 * (p.y + 0.06 * FBm(p2, dpdx, dpdy, 1.0, 4));
 	float b = 0.2 * FBm(p * 100, dpdx, dpdy, 1.0, 8);
 	float a0 = (0.6 + b) * thing(x0) + (0.3 - b) * thing(x1);
 	
