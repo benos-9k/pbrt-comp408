@@ -14,40 +14,33 @@ Spectrum BenTexture::Evaluate(const DifferentialGeometry &dg) const {
 	};
 
 	Point p2 = p;
+	// make the primary noise less dependent on the 'grain plane'
 	p2.x *= 0.08;
 	p2.z *= 0.08;
-	p2.y += 0.08 * pow(sin(2.0 * M_PI * p2.y + 0.3 * FBm(p, dpdx, dpdy, 1, 2)), 2.0);
-	//p2.y += 0.08 * cos(p2.z * 50.0);
-	float n = FBm(p2, dpdx, dpdy, 1.0, 4);
-	float m = 0.08 * n;
+	// introduce a wobble to create uneven grain spacing
+	// i dont think this does exactly what i want; oh dear, how sad, never mind.
+	p2.y += wobble2 * pow(sin(wobble2_freq * (2.0 * M_PI * p2.y + wobble1 * FBm(wobble1_freq * p, dpdx, dpdy, 1, 4))), 2.0);
+	// noise and scale
+	float n = FBm(wobble0_freq * p2, dpdx, dpdy, 1.0, 4);
+	float m = wobble0 * n;
 
 	// eval points for wood 'waves'
-	float x0 = 40 * (p.y + m);
-	float x1 = 200 * (p.y + m);
+	float x0 = grain0_freq * (p.y + m);
+	float x1 = grain1_freq * (p.y + m);
 
 	// interpolation noise
 	Point p3 = p;
-	p3.y *= 5;
-	p3.x *= 100;
-	p3.z *= 100;
-	float b0 = 0.2 * (FBm(p3, dpdx, dpdy, 1.0, 8) + n);
+	p3.x *= noise_stretch;
+	p3.z *= noise_stretch;
+	float b0 = noise_weight * (FBm(noise_freq * p3, dpdx, dpdy, 1.0, 8) + n);
 
 	// light <-> dark interpolant
 	float a0 = (0.6 + b0) * thing(x0) + (0.4 - b0) * thing(x1);
 	
-
-	float c0[3] { 192.0 / 255.0, 134.0 / 255.0, 84.0 / 255.0 };
-	float c1[3] { 211.0 / 255.0, 102.0 / 255.0, 32.0 / 255.0 };
-	float c2[3] { 85.0 / 255.0, 53.0 / 255.0, 22.0 / 255.0 };
-
-	Spectrum s0 = Spectrum::FromRGB(c0);
-	Spectrum s1 = Spectrum::FromRGB(c1);
-	Spectrum s2 = Spectrum::FromRGB(c2);
-	
 	// colour blotchiness noise
-	float b2 = 0.3 * FBm(p * 5, dpdx, dpdy, 0.5, 8);
+	float b2 = blotch_weight * FBm(blotch_freq * p, dpdx, dpdy, 0.5, 8);
 
-	return ((0.6 + b2) * s0 + (0.4 - b2) * s1) * (1.0 - a0) + s2 * a0;
+	return ((0.6 + b2) * color0 + (0.4 - b2) * color1) * (1.0 - a0) + color2 * a0;
 }
 
 Texture<float> * CreateBenFloatTexture(const Transform &tex2world, const TextureParams &tp) {
@@ -56,5 +49,5 @@ Texture<float> * CreateBenFloatTexture(const Transform &tex2world, const Texture
 
 BenTexture * CreateBenSpectrumTexture(const Transform &tex2world, const TextureParams &tp) {
 	TextureMapping3D *map = new IdentityMapping3D(tex2world);
-	return new BenTexture(map);
+	return new BenTexture(map, tp);
 }
