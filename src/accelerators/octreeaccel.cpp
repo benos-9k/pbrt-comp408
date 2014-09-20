@@ -1,5 +1,6 @@
 
 #include "octreeaccel.h"
+#include "intersection.h"
 
 // SSE ftw, just cause i can
 #include <xmmintrin.h>
@@ -7,6 +8,9 @@
 #include <cstring>
 #include <iostream>
 #include <unordered_map>
+#include <queue>
+
+using namespace std;
 
 #define BEN_OCTREE_MAX_LEAF_VALUES 16
 
@@ -40,7 +44,7 @@ namespace {
 			return Vector(x(), y(), z());
 		}
 
-		inline __m128 data() {
+		inline __m128 data() const {
 			return m_data;
 		}
 
@@ -215,6 +219,26 @@ namespace {
 			return r != 0.f;
 		}
 
+		inline float min() const {
+			__m128 r1 = m_data;
+			__m128 r2 = _mm_shuffle_ps(r1, r1, _MM_SHUFFLE(0, 0, 0, 1));
+			__m128 r3 = _mm_shuffle_ps(r1, r1, _MM_SHUFFLE(0, 0, 0, 2));
+			__m128 r4 = _mm_min_ss(r3, _mm_min_ss(r2, r1));
+			float r;
+			_mm_store_ss(&r, r4);
+			return r;
+		}
+
+		inline float max() const {
+			__m128 r1 = m_data;
+			__m128 r2 = _mm_shuffle_ps(r1, r1, _MM_SHUFFLE(0, 0, 0, 1));
+			__m128 r3 = _mm_shuffle_ps(r1, r1, _MM_SHUFFLE(0, 0, 0, 2));
+			__m128 r4 = _mm_max_ss(r3, _mm_max_ss(r2, r1));
+			float r;
+			_mm_store_ss(&r, r4);
+			return r;
+		}
+
 	};
 
 	// axis-aligned bounding box
@@ -279,8 +303,45 @@ namespace {
 			return fromPoints(b.pMin, b.pMax);
 		}
 
+		inline operator BBox() const {
+			return BBox(min(), max());
+		}
+
 	};
 
+	inline void sanitize_intersection_times(float3 &mint, float3 &maxt) {
+		// deal with plane-aligned rays (nans)
+		// we want a pair of infinities
+		// we have at least one infinity; the value for the other plane is either
+		// the opposite signed infinity if the origin is between the plane pair,
+		// the same signed infinity if outside the the plane pair,
+		// or a nan if the origin is on one of the planes (in which case the infinity is of indeterminate signedness)
+		// so - replace nans with infinity of opposite sign to t for other plane
+
+		__m128 mint0 = mint.data();
+		__m128 maxt0 = maxt.data();
+
+		// TODO does cmpunord have the behaviour i expect?
+
+		// replace nans in min
+		__m128 minnans = _mm_cmpunord_ps(mint0, mint0);
+		__m128 mint1 = _mm_or_ps(_mm_and_ps(minnans, _mm_sub_ps(_mm_setzero_ps(), maxt0)), _mm_andnot_ps(minnans, mint0));
+
+		// replace nans in max
+		__m128 maxnans = _mm_cmpunord_ps(maxt0, maxt0);
+		__m128 maxt1 = _mm_or_ps(_mm_and_ps(maxnans, _mm_sub_ps(_mm_setzero_ps(), mint0)), _mm_andnot_ps(maxnans, maxt0));
+
+		// sort entrance/exit properly
+		mint = float3(_mm_min_ps(mint1, maxt1));
+		maxt = float3(_mm_max_ps(mint1, maxt1));
+
+	}
+
+	inline bool intersection_time(const float3 &mint, const float3 &maxt, float &t0, float &t1) {
+		t0 = mint.max();
+		t1 = maxt.min();
+		return t0 <= t1;
+	}
 }
 
 class OctreeAccel::Node {
@@ -313,16 +374,21 @@ private:
 		return 0x7 & _mm_movemask_ps((p >= m_bound.center()).data());
 	}
 
+	// mask is true where cid bit is _not_ set
+	inline __m128 childInvMask(unsigned cid) const {
+		__m128i m = _mm_set1_epi32(cid);
+		m = _mm_and_si128(m, _mm_set_epi32(0, 4, 2, 1));
+		m = _mm_cmpeq_epi32(_mm_setzero_si128(), m);
+		return _mm_castsi128_ps(m);
+	}
+
 	inline aabb childBound(unsigned cid) const {
 		// positive / negative halfsizes
 		__m128 h = m_bound.halfsize().data();
 		__m128 g = _mm_sub_ps(_mm_setzero_ps(), h);
 
 		// convert int bitmask to (opposite) sse mask
-		__m128i m = _mm_set1_epi32(cid);
-		m = _mm_and_si128(m, _mm_set_epi32(0, 4, 2, 1));
-		m = _mm_cmpeq_epi32(_mm_setzero_si128(), m);
-		__m128 n = _mm_castsi128_ps(m);
+		__m128 n = childInvMask(cid);
 
 		// vector to a corner of the current node's aabb
 		float3 vr(_mm_or_ps(_mm_and_ps(n, g), _mm_andnot_ps(n, h)));
@@ -412,6 +478,89 @@ public:
 		return true;
 	}
 
+	inline bool intersect(const Ray &ray, Intersection *isct, bool fast, unsigned depth = 0) const {
+		struct foo {
+			float t;
+			Node *n;
+
+			inline foo(float t_, Node *n_) : t(t_), n(n_) { }
+
+			inline bool operator<(const foo &rhs) const {
+				// std::priority_queue has the _last_ element as the top
+				return t > rhs.t;
+			}
+
+			inline bool intersect(const Ray &ray, Intersection *isct, bool fast, unsigned depth) const {
+				return n->intersect(ray, isct, fast, depth);
+			}
+		};
+
+		bool hit = false;
+
+		// test primitives in this node
+		for (auto pair : m_values) {
+			// IMPORTANT: ray.maxt gets set by Primitive::Intersect()
+			hit |= pair.first->Intersect(ray, isct);
+			if (hit && fast) return true;
+		}
+
+		// prepare a queue of children to test in order
+		std::priority_queue<foo> q;
+
+		float3 rayo(ray.o);
+		float3 irayd = float3(1.f) / float3(ray.d);
+
+		// you can, in theory, calculate intersection times for the root
+		// and then successively average them (for each axis) for child nodes
+		// i havent been able to get this to work, and it has problems regarding axis-aligned rays
+
+		for (unsigned cid = 0; cid < 8; cid++) {
+			Node *child = m_children[cid];
+			if (!child) continue;
+
+			// min/max for child bounding box
+			float3 minv1 = child->bound().min();
+			float3 maxv1 = child->bound().max();
+
+			// individual plane intersection times
+			float3 mint1 = (minv1 - rayo) * irayd;
+			float3 maxt1 = (maxv1 - rayo) * irayd;
+
+			// sanitize in case of nans
+			sanitize_intersection_times(mint1, maxt1);
+
+			// find intersection times
+			float t0, t1;
+			if (intersection_time(mint1, maxt1, t0, t1)) {
+				// we hit the child node
+				if (t0 < ray.maxt && t1 >= ray.mint) {
+					// we enter the child before ray-max (== current earliest intersection)
+					// and leave the child after ray-min
+					q.push(foo(t0, child));
+				}
+			}
+
+			// for debugging
+			//if (BBox(child->bound()).IntersectP(ray, &t0, &t1)) {
+			//	q.push(foo(t0, child, mint1, maxt1));
+			//}
+
+		}
+
+		// now test child nodes
+		while (!q.empty()) {
+			foo bar = q.top();
+			q.pop();
+			if (bar.intersect(ray, isct, fast, depth + 1)) {
+				return true;
+			}
+		}
+
+		// THIS IS SLIGHTLY BUGGY
+
+		return hit;
+	}
+
 };
 
 inline void OctreeAccel::Node::unleafify() {
@@ -474,11 +623,13 @@ BBox OctreeAccel::WorldBound() const {
 }
 
 bool OctreeAccel::Intersect(const Ray &ray, Intersection *isect) const {
-	// TODO
-	return false;
+	if (!root) return false;
+
+	return root->intersect(ray, isect, false);
 }
 
 bool OctreeAccel::IntersectP(const Ray &ray) const {
-	// TODO
-	return false;
+	if (!root) return false;
+	Intersection isct;
+	return root->intersect(ray, &isct, true);
 }

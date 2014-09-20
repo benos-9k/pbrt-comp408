@@ -1,8 +1,10 @@
 
 Accelerator "octree"
 
+#Sampler "bestcandidate" "integer pixelsamples" [1]
+
 Film "image"
-#	"integer xresolution" [128] "integer yresolution" [128] 
+#	"integer xresolution" [512] "integer yresolution" [512] 
 LookAt 0 .2 .2    -.02 .1 0  0 1 0
 Camera "perspective" "float fov" [60]
 
