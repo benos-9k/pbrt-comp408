@@ -15,6 +15,9 @@ public:
 	OctreeAccel(const vector<Reference<Primitive>> &prims);
 	~OctreeAccel();
 
+	OctreeAccel(const OctreeAccel &) = delete;
+	OctreeAccel & operator=(const OctreeAccel &) = delete;
+
 	BBox WorldBound() const;
 	bool CanIntersect() const { return true; }
 

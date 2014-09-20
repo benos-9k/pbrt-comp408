@@ -12,7 +12,7 @@
 
 namespace {
 
-	struct out_of_bounds { };
+	unsigned octree_node_count = 0;
 
 	// sse vector
 	class float3 {
@@ -81,7 +81,7 @@ namespace {
 		}
 
 		inline float3 operator+(float rhs) const {
-			return float3(*this) + rhs;
+			return float3(*this) += rhs;
 		}
 
 		inline friend float3 operator+(float lhs, const float3 &rhs) {
@@ -103,7 +103,7 @@ namespace {
 		}
 
 		inline float3 operator-(float rhs) const {
-			return float3(*this) - rhs;
+			return float3(*this) -= rhs;
 		}
 
 		inline friend float3 operator-(float lhs, const float3 &rhs) {
@@ -125,7 +125,7 @@ namespace {
 		}
 
 		inline float3 operator*(float rhs) const {
-			return float3(*this) * rhs;
+			return float3(*this) *= rhs;
 		}
 
 		inline friend float3 operator*(float lhs, const float3 &rhs) {
@@ -255,7 +255,8 @@ namespace {
 		}
 
 		inline bool contains_partial(const aabb &a) const {
-			return float3::any(float3::abs(a.m_center - m_center) <= (m_halfsize - a.m_halfsize));
+			// intersects + contains in 1 dimension
+			return float3::any(float3::abs(a.m_center - m_center) <= (m_halfsize - a.m_halfsize)) && intersects(a);
 		}
 
 		inline bool intersects(const aabb &a) const {
@@ -292,7 +293,14 @@ public:
 		}
 	};
 
-	using map_t = std::unordered_map<Reference<Primitive>, aabb, hash>;
+	struct keyeq {
+		// reference doesnt have a == operator?
+		inline bool operator()(const Reference<Primitive> &lhs, const Reference<Primitive> &rhs) const {
+			return lhs.GetPtr() == rhs.GetPtr();
+		}
+	};
+
+	using map_t = std::unordered_map<Reference<Primitive>, aabb, hash, keyeq>;
 
 private:
 	aabb m_bound;
@@ -301,8 +309,26 @@ private:
 	size_t m_count = 0;
 	bool m_isleaf = true;
 
-	inline unsigned childID(const float3 &p) {
+	inline unsigned childID(const float3 &p) const {
 		return 0x7 & _mm_movemask_ps((p >= m_bound.center()).data());
+	}
+
+	inline aabb childBound(unsigned cid) const {
+		// positive / negative halfsizes
+		__m128 h = m_bound.halfsize().data();
+		__m128 g = _mm_sub_ps(_mm_setzero_ps(), h);
+
+		// convert int bitmask to (opposite) sse mask
+		__m128i m = _mm_set1_epi32(cid);
+		m = _mm_and_si128(m, _mm_set_epi32(0, 4, 2, 1));
+		m = _mm_cmpeq_epi32(_mm_setzero_si128(), m);
+		__m128 n = _mm_castsi128_ps(m);
+
+		// vector to a corner of the current node's aabb
+		float3 vr(_mm_or_ps(_mm_and_ps(n, g), _mm_andnot_ps(n, h)));
+		const float3 c = m_bound.center();
+
+		return aabb::fromPoints(c, c + vr);
 	}
 			
 	inline void unleafify();
@@ -311,6 +337,7 @@ public:
 	inline Node(const aabb &a_) : m_bound(a_) {
 		// clear child pointers
 		std::memset(m_children, 0, 8 * sizeof(Node *));
+		octree_node_count++;
 	}
 
 	Node(const Node &) = delete;
@@ -324,49 +351,63 @@ public:
 		return m_count;
 	}
 
-	// move-insert a value, using a specified bounding box
+	// insert a value, using a specified bounding box
 	inline bool insert(const value_t &t, const aabb &a) {
-		if (!m_bound.contains_partial(a)) throw out_of_bounds();
 		if (m_isleaf && m_count < BEN_OCTREE_MAX_LEAF_VALUES) {
-			if (!m_values.insert(std::make_pair(t, a)).second) return false;
+			if (!m_values.insert(std::make_pair(t, a)).second) {
+				Warning("Octree insert failed");
+				return false;
+			}
 		} else {
 			// not a leaf or should not be
 			unleafify();
 			unsigned cid_min = childID(a.min());
 			unsigned cid_max = childID(a.max());
 			if (cid_min != cid_max) {
-				// element spans multiple child nodes, insert into this one
-				// TODO
-				if (!m_values.insert(std::make_pair(t, a)).second) return false;
+				// element spans multiple child nodes
+				unsigned insert_count = 0;
+				unsigned cp_count = 0, isct_count = 0;
+
+				// insert into all children that partially contain it (create duplicates)
+				// create children as needed
+				for (unsigned cid = 0; cid < 8; cid++) {
+					aabb cb = childBound(cid);
+					if (cb.intersects(a)) isct_count++;
+					if (cb.contains_partial(a)) {
+						cp_count++;
+						Node *child = m_children[cid];
+						if (!child) {
+							child = new Node(cb);
+							m_children[cid] = child;
+						}
+						insert_count += child->insert(t, a);
+					}
+				}
+				
+				// this relies on the assumption that if a value is partially contained by
+				// any child, then all children that intersect it also partially contain it
+				if (cp_count && (cp_count != isct_count)) Error("OctreeAccel: Assumption invalid!");
+
+				if (!cp_count) {
+					// if no child partially contains it
+					// (it crosses the center-point, any face mid-point or any edge mid-point)
+					// add to this node
+					insert_count += m_values.insert(std::make_pair(t, a)).second;
+				}
+
+				if (!insert_count) return false;
+
 			} else {
 				// element contained in one child node - create if necessary then insert
 				Node *child = m_children[cid_min];
 				if (!child) {
-					// positive / negative halfsizes
-					__m128 h = m_bound.halfsize().data();
-					__m128 g = _mm_sub_ps(_mm_setzero_ps(), h);
-
-					// convert int bitmask to (opposite) sse mask
-					__m128i m = _mm_set1_epi32(cid_min);
-					m = _mm_and_si128(m, _mm_set_epi32(0, 4, 2, 1));
-					m = _mm_cmpeq_epi32(_mm_setzero_si128(), m);
-					__m128 n = _mm_castsi128_ps(m);
-
-					// vector to a corner of the current node's aabb
-					float3 vr(_mm_or_ps(_mm_and_ps(n, g), _mm_andnot_ps(n, h)));
-					const float3 c = m_bound.center();
-
-					child = new Node(aabb::fromPoints(c, c + vr));
+					child = new Node(childBound(cid_min));
 					m_children[cid_min] = child;
 				}
-				try {
-					if (!child->insert(t, a)) return false;
-				} catch (out_of_bounds &e) {
-					// child doesn't want to accept it
-					if (!m_values.insert(std::make_pair(t, a)).second) return false;
-				}
+				if (!child->insert(t, a)) return false;
 			}
 		}
+		// because of allowing duplicates, counts of subtrees will no longer add up
 		m_count++;
 		return true;
 	}
@@ -374,7 +415,18 @@ public:
 };
 
 inline void OctreeAccel::Node::unleafify() {
-
+	if (m_isleaf) {
+		//Warning("unleafify");
+		m_isleaf = false;
+		// move current elements out of node
+		map_t temp = std::move(m_values);
+		// decrement the count because re-inserting will increment it again
+		m_count -= temp.size();
+		// re-insert values
+		for (auto it = temp.begin(); it != temp.end(); ++it) {
+			insert(std::move(it->first), it->second);
+		}
+	}
 }
 
 OctreeAccel::OctreeAccel(const vector<Reference<Primitive>> &prims) {
@@ -401,18 +453,20 @@ OctreeAccel::OctreeAccel(const vector<Reference<Primitive>> &prims) {
 	// make root
 	root = new Node(aabb::fromBBox(bound));
 
+	Warning("Octree building...");
+
 	// add things
 	for (const auto &prim : allprims) {
 		root->insert(prim, aabb::fromBBox(prim->WorldBound()));
 	}
 
-	Warning("Octree built");
+	Warning("Octree built (%d nodes)", octree_node_count);
 
 }
 
 OctreeAccel::~OctreeAccel() {
 	if (root) delete root;
-};
+}
 
 BBox OctreeAccel::WorldBound() const {
 	if (!root) return BBox();
