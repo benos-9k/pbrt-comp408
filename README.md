@@ -25,7 +25,7 @@ cd ..
 ```
 
 Building on Windows (VS2013, x64)
-----------------------------
+---------------------------------
 
 From repository root, in cmd:
 ```
