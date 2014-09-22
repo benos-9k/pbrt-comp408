@@ -35,9 +35,9 @@ public:
 		wobble0_freq = tp.FindFloat("wobble0_freq", 1);
 		wobble0 = tp.FindFloat("wobble0", 0.08);
 		wobble1_freq = tp.FindFloat("wobble1_freq", 1);
-		wobble1 = tp.FindFloat("wobble1", 0.2);
+		wobble1 = tp.FindFloat("wobble1", 0.3);
 		wobble2_freq = tp.FindFloat("wobble2_freq", 1);
-		wobble2 = tp.FindFloat("wobble2", 0.15 / wobble2_freq);
+		wobble2 = tp.FindFloat("wobble2", 0.08 / wobble2_freq);
 		grain0_freq = tp.FindFloat("grain0_freq", 40);
 		grain1_freq = tp.FindFloat("grain1_freq", 200);
 		noise_stretch = tp.FindFloat("noise_stretch", 20);

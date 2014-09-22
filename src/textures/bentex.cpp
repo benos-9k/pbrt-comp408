@@ -19,7 +19,7 @@ Spectrum BenTexture::Evaluate(const DifferentialGeometry &dg) const {
 	p2.z *= 0.08;
 	// introduce a wobble to create uneven grain spacing
 	// i dont think this does exactly what i want; oh dear, how sad, never mind.
-	p2.y += wobble2 * pow(sin(wobble2_freq * (2.0 * M_PI * p2.y + wobble1 * FBm(wobble1_freq * p, dpdx, dpdy, 1, 4))), 2.0);
+	p2.y += wobble2 * pow(sin(wobble2_freq * (2.0 * M_PI * p2.y + wobble1 * FBm(wobble1_freq * p, dpdx, dpdy, 1, 2))), 2.0);
 	// noise and scale
 	float n = FBm(wobble0_freq * p2, dpdx, dpdy, 1.0, 4);
 	float m = wobble0 * n;
